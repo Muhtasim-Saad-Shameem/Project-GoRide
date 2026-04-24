@@ -22,6 +22,41 @@ export default function ImpactDashboard() {
   const [displayCo2, setDisplayCo2] = useState(0);
   const [displayPoints, setDisplayPoints] = useState(0);
 
+  // Payment state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [onlineStep, setOnlineStep] = useState("methods"); // methods, bKash, nagad, rocket
+  const [walletNumber, setWalletNumber] = useState("");
+
+  const handlePaymentSubmit = async (rideId, method) => {
+    setPaymentLoading(true);
+    try {
+      const res = await fetch(`/api/rides/${rideId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          paymentStatus: "paid",
+          paymentMethod: method 
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRide(prev => ({ ...prev, paymentStatus: 'paid', paymentMethod: method }));
+        setShowPaymentModal(false);
+        setShowSuccessModal(true);
+        setOnlineStep("methods");
+        setWalletNumber("");
+      } else {
+        alert(`Payment error: ${data.error}`);
+      }
+    } catch (err) {
+      alert(`Payment error: ${err.message}`);
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
 
@@ -148,6 +183,27 @@ export default function ImpactDashboard() {
           </div>
         </div>
 
+        {/* Payment Required Alert */}
+        {ride.paymentStatus !== 'paid' && (
+          <div className="w-full max-w-5xl bg-orange-50 border-2 border-orange-200 rounded-2xl p-6 mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="bg-orange-100 text-orange-600 p-3 rounded-full text-2xl">
+                💰
+              </div>
+              <div className="text-left">
+                <h3 className="text-xl font-bold text-gray-800">Payment Pending</h3>
+                <p className="text-gray-600">Please complete the payment of ৳{ride.fare} for this ride.</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setShowPaymentModal(true)}
+              className="bg-orange-600 hover:bg-orange-700 text-white font-extrabold py-3 px-10 rounded-xl shadow-lg transition transform hover:scale-105 active:scale-95"
+            >
+              PAY NOW
+            </button>
+          </div>
+        )}
+
         {/* Stats Grid */}
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           
@@ -220,6 +276,167 @@ export default function ImpactDashboard() {
         </div>
 
       </div>
+
+      {/* Payment Modal */}
+      {showPaymentModal && ride && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in duration-300">
+            {/* Header */}
+            <div className={`p-6 text-white text-center transition-colors duration-500 ${
+              onlineStep === "bKash" ? "bg-[#D12053]" : 
+              onlineStep === "nagad" ? "bg-[#F7941D]" : 
+              onlineStep === "rocket" ? "bg-[#8C3494]" : "bg-gradient-to-r from-orange-500 to-orange-600"
+            }`}>
+              <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
+                {onlineStep === "methods" ? "💰" : "📱"}
+              </div>
+              <h2 className="text-2xl font-bold">
+                {onlineStep === "methods" ? "Ride Payment" : 
+                 onlineStep === "bKash" ? "bKash Payment" :
+                 onlineStep === "nagad" ? "Nagad Payment" : "Rocket Payment"}
+              </h2>
+              <p className="opacity-90">Total Fare to Pay</p>
+              <div className="text-4xl font-extrabold mt-1">৳{ride.fare}</div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {onlineStep === "methods" ? (
+                <>
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="text-gray-500">Route</span>
+                      <span className="font-semibold text-gray-800">{ride.origin.split(',')[0]} → {ride.destination.split(',')[0]}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-500">Driver</span>
+                      <span className="font-semibold text-gray-800">{ride.driverName}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <p className="text-sm font-bold text-gray-700 uppercase tracking-wider">Choose Payment Method</p>
+                    
+                    <button
+                      onClick={() => handlePaymentSubmit(ride._id, "cash")}
+                      disabled={paymentLoading}
+                      className="w-full flex items-center gap-4 p-4 border-2 border-gray-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 transition group"
+                    >
+                      <div className="bg-green-100 text-green-600 w-12 h-12 rounded-lg flex items-center justify-center text-2xl group-hover:scale-110 transition">
+                        💵
+                      </div>
+                      <div className="text-left">
+                        <div className="font-bold text-gray-800">Cash Payment</div>
+                        <div className="text-xs text-gray-500">Pay directly to the driver</div>
+                      </div>
+                    </button>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <button
+                        onClick={() => setOnlineStep("bKash")}
+                        className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#D12053] hover:bg-pink-50 transition"
+                      >
+                        <div className="text-2xl mb-1">🎀</div>
+                        <span className="text-[10px] font-bold text-[#D12053]">bKash</span>
+                      </button>
+                      <button
+                        onClick={() => setOnlineStep("nagad")}
+                        className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#F7941D] hover:bg-orange-50 transition"
+                      >
+                        <div className="text-2xl mb-1">🔸</div>
+                        <span className="text-[10px] font-bold text-[#F7941D]">Nagad</span>
+                      </button>
+                      <button
+                        onClick={() => setOnlineStep("rocket")}
+                        className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#8C3494] hover:bg-purple-50 transition"
+                      >
+                        <div className="text-2xl mb-1">🚀</div>
+                        <span className="text-[10px] font-bold text-[#8C3494]">Rocket</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Digital Wallet Step */
+                <div className="space-y-4 animate-in slide-in-from-right duration-300">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Enter {onlineStep.charAt(0).toUpperCase() + onlineStep.slice(1)} Number
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">+880</span>
+                      <input
+                        type="tel"
+                        maxLength="11"
+                        value={walletNumber}
+                        onChange={(e) => setWalletNumber(e.target.value.replace(/\D/g, ""))}
+                        placeholder="1XXXXXXXXX"
+                        className="w-full pl-16 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-0 text-lg tracking-widest font-bold"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => handlePaymentSubmit(ride._id, onlineStep)}
+                      disabled={paymentLoading || walletNumber.length < 10}
+                      className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition active:scale-95 disabled:opacity-50 ${
+                        onlineStep === "bKash" ? "bg-[#D12053] hover:bg-[#B01B46]" : 
+                        onlineStep === "nagad" ? "bg-[#F7941D] hover:bg-[#E0851A]" : 
+                        "bg-[#8C3494] hover:bg-[#762C7D]"
+                      }`}
+                    >
+                      {paymentLoading ? "Processing..." : `Pay ৳${ride.fare} Now`}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOnlineStep("methods");
+                        setWalletNumber("");
+                      }}
+                      className="w-full py-2 text-gray-500 text-sm font-medium hover:text-gray-700 transition"
+                    >
+                      ← Change Method
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() => {
+                  setShowPaymentModal(false);
+                  setOnlineStep("methods");
+                  setWalletNumber("");
+                }}
+                className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70] p-4 backdrop-blur-md">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-8 text-center animate-in zoom-in duration-300">
+            <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6 text-5xl animate-bounce">
+              ✓
+            </div>
+            <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Success!</h2>
+            <p className="text-gray-600 text-lg font-medium mb-8">
+              Your payment is received
+            </p>
+            <button
+              onClick={() => setShowSuccessModal(false)}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-green-200 transition transform active:scale-95"
+            >
+              Great!
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

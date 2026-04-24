@@ -1,6 +1,6 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import ChatPopup from "@/components/ChatPopup";
+// import ChatPopup from "@/components/ChatPopup"; // Temporarily commented out due to merge conflicts
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,7 +22,7 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
-        <ChatPopup />
+        {/* <ChatPopup /> Temporarily commented out due to merge conflicts */}
       </body>
     </html>
   );

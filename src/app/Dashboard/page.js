@@ -6,6 +6,7 @@ import Link from "next/link";
 import PreferencesModal from "@/components/PreferencesModal";
 import { nameToOption } from "@/lib/preferenceOptions";
 import { io } from "socket.io-client";
+import { registerFCM } from "@/lib/registerFCM";
 
 let socketInstance = null;
 function getSocket() {
@@ -106,6 +107,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchProfileAndRides();
+    registerFCM((payload) => {
+      console.log("Message received:", payload);
+      alert(`${payload.notification.title}: ${payload.notification.body}`);
+    });
 
     // Listen for real-time status updates
     const socket = getSocket();

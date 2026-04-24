@@ -1,13 +1,18 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import Header from '@/components/Header';
 import Script from 'next/script';
 import Link from 'next/link';
 import PreferencesModal from '@/components/PreferencesModal';
 import { preferenceOptions, nameToOption } from '@/lib/preferenceOptions';
 import { departments, buildings } from '@/lib/campusOptions';
-import RouteMap from '@/components/RouteMap';
+import { registerFCM } from '@/lib/registerFCM';
+
+const RouteMap = dynamic(() => import('@/components/RouteMap'), {
+  ssr: false,
+});
 
 
 const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
@@ -56,6 +61,8 @@ export default function GoRidePage() {
     if (!hasGoogleMapsKey) {
       setMessage('Google Maps is not configured. Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY in .env.local.');
     }
+
+    registerFCM().catch((err) => console.error('OfferRide FCM registration failed:', err));
   }, []);
 
   useEffect(() => {

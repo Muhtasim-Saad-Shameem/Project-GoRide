@@ -2,6 +2,7 @@ import connectMongoDB from "@/lib/mongodb";
 import Ride from "@/models/Ride";
 import User from "@/models/User";
 import DriverDoc from "@/models/DriverDoc";
+import admin from "@/lib/firebase";
 import { jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
@@ -10,6 +11,26 @@ const getJwtSecretKey = () => {
     process.env.JWT_SECRET ||
     "fallback_default_secret_please_change_in_production";
   return new TextEncoder().encode(secret);
+};
+
+const sendRidePostedNotification = async (userId) => {
+  try {
+    await connectMongoDB();
+    const user = await User.findById(userId);
+    if (!user?.fcmToken) return;
+
+    const message = {
+      notification: {
+        title: "Rider is on the way",
+        body: "A rider is on his way and will arrive at your location within 10-12 minutes.",
+      },
+      token: user.fcmToken,
+    };
+
+    await admin.messaging().send(message);
+  } catch (error) {
+    console.error("Ride posted notification error:", error);
+  }
 };
 
 export async function GET(request) {
@@ -166,6 +187,14 @@ export async function POST(request) {
     }
 
     const ride = await Ride.create(rideData);
+
+    if (rideData.creator) {
+      setTimeout(() => {
+        sendRidePostedNotification(rideData.creator).catch((err) => {
+          console.error("Scheduled ride notification failed:", err);
+        });
+      }, 60000);
+    }
 
     // Calculate and award impact points
     if (rideData.creator && rideData.distanceKm && rideData.seats) {

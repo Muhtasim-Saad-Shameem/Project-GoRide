@@ -13,7 +13,10 @@ const RouteMap = dynamic(() => import('@/components/RouteMap'), {
   ssr: false,
 });
 
-
+const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+const isLikelyGoogleMapsKey = (key) => /^AIza[0-9A-Za-z_-]{20,}$/.test(key);
+const hasGoogleMapsKey = isLikelyGoogleMapsKey(mapsApiKey);
+const hasInvalidGoogleMapsKey = Boolean(mapsApiKey) && !hasGoogleMapsKey;
 
 export default function GoRidePage() {
   const [formData, setFormData] = useState({

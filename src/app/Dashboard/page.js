@@ -88,6 +88,7 @@ export default function DashboardPage() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [onlineStep, setOnlineStep] = useState("methods"); // methods, bkash, nagad, rocket
   const [walletNumber, setWalletNumber] = useState("");
+  const [securityCode, setSecurityCode] = useState("");
   const [paymentPromptedRideIds, setPaymentPromptedRideIds] = useState([]);
 
   // Rating state
@@ -379,6 +380,7 @@ export default function DashboardPage() {
     setShowPaymentModal(false);
     setOnlineStep("methods");
     setWalletNumber("");
+    setSecurityCode("");
   };
 
   const handlePassengerCashIntent = async (rideId) => {
@@ -1054,7 +1056,7 @@ export default function DashboardPage() {
                                     ✕ Cancel Ride
                                   </button>
                                 )}
-                              {ride.status === "completed" && ride.paymentStatus !== "paid" && (
+                              {ride.status === "completed" && ride.paymentStatus !== "paid" && isUserPassenger(ride) && (
                                 <button
                                   onClick={() => {
                                     setSelectedPaymentRide(ride);
@@ -1109,6 +1111,17 @@ export default function DashboardPage() {
                                     ⭐ Rate Rider
                                   </button>
                                 )}
+                              {ride.status === "completed" && ride.riderRating && (
+                                <div className="mt-2 p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                  <p className="text-xs font-bold text-purple-700 uppercase mb-1">Your Feedback for Rider</p>
+                                  <div className="flex items-center gap-1 mb-1">
+                                    {[1, 2, 3, 4, 5].map((s) => (
+                                      <span key={s} className={s <= ride.riderRating ? "text-yellow-500" : "text-gray-300"}>★</span>
+                                    ))}
+                                  </div>
+                                  {ride.riderReview && <p className="text-sm text-gray-700 italic">"{ride.riderReview}"</p>}
+                                </div>
+                              )}
                             </div>
                           </>
                         )}
@@ -1161,6 +1174,17 @@ export default function DashboardPage() {
                                 >
                                   ⭐ Rate Driver
                                 </button>
+                              )}
+                            {ride.status === "completed" && user && isUserPassenger(ride) && ride.driverRating && (
+                                <div className="mt-2 p-3 bg-purple-50 rounded-lg border border-purple-100 w-full">
+                                  <p className="text-xs font-bold text-purple-700 uppercase mb-1">Your Feedback for Driver</p>
+                                  <div className="flex items-center gap-1 mb-1">
+                                    {[1, 2, 3, 4, 5].map((s) => (
+                                      <span key={s} className={s <= ride.driverRating ? "text-yellow-500" : "text-gray-300"}>★</span>
+                                    ))}
+                                  </div>
+                                  {ride.driverReview && <p className="text-sm text-gray-700 italic">"{ride.driverReview}"</p>}
+                                </div>
                               )}
                             {ride.creator && (
                               <span className="text-sm text-gray-500 ml-auto">
@@ -1217,7 +1241,6 @@ export default function DashboardPage() {
                       </div>
 
                       {/* Options for Passenger */}
-                      {isUserPassenger(selectedPaymentRide) ? (
                         <div className="space-y-3">
                           <p className="text-sm font-bold text-gray-700 uppercase tracking-wider">Choose Payment Method</p>
                           
@@ -1231,7 +1254,7 @@ export default function DashboardPage() {
                             </div>
                             <div className="text-left">
                               <div className="font-bold text-gray-800">I Paid in Cash</div>
-                              <div className="text-xs text-gray-500">Notify driver to confirm receipt</div>
+                              <div className="text-xs text-gray-500">Confirm cash payment for this ride</div>
                             </div>
                           </button>
 
@@ -1259,23 +1282,6 @@ export default function DashboardPage() {
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        /* Driver View */
-                        <div className="text-center space-y-4">
-                          <div className="p-4 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium">
-                            {selectedPaymentRide.paymentStatus === "pending"
-                              ? "Passenger marked cash payment. Confirm when you receive cash in real life."
-                              : "Confirm cash only after receiving payment in real life."}
-                          </div>
-                          <button
-                            onClick={() => handleDriverCashConfirm(selectedPaymentRide._id)}
-                            disabled={paymentLoading}
-                            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform active:scale-95 disabled:opacity-50"
-                          >
-                            {paymentLoading ? "Confirming..." : "Confirm Cash Received"}
-                          </button>
-                        </div>
-                      )}
                     </>
                   ) : (
                     /* Digital Wallet Step */
@@ -1297,10 +1303,23 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Digital Banking Security Code or Password
+                        </label>
+                        <input
+                          type="password"
+                          value={securityCode}
+                          onChange={(e) => setSecurityCode(e.target.value)}
+                          placeholder="••••••"
+                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-0 text-lg tracking-widest font-bold"
+                        />
+                      </div>
+
                       <div className="space-y-3">
                         <button
                           onClick={() => handleOnlinePayment(selectedPaymentRide._id, onlineStep)}
-                          disabled={paymentLoading || walletNumber.length < 10}
+                          disabled={paymentLoading || walletNumber.length < 10 || !securityCode}
                           className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition active:scale-95 disabled:opacity-50 ${
                             onlineStep === "bkash" ? "bg-[#D12053] hover:bg-[#B01B46]" : 
                             onlineStep === "nagad" ? "bg-[#F7941D] hover:bg-[#E0851A]" : 
@@ -1313,6 +1332,7 @@ export default function DashboardPage() {
                           onClick={() => {
                             setOnlineStep("methods");
                             setWalletNumber("");
+                            setSecurityCode("");
                           }}
                           className="w-full py-2 text-gray-500 text-sm font-medium hover:text-gray-700 transition"
                         >

@@ -28,6 +28,7 @@ export default function ImpactDashboard() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [onlineStep, setOnlineStep] = useState("methods"); // methods, bKash, nagad, rocket
   const [walletNumber, setWalletNumber] = useState("");
+  const [securityCode, setSecurityCode] = useState("");
 
   const handlePaymentSubmit = async (rideId, method) => {
     setPaymentLoading(true);
@@ -47,6 +48,7 @@ export default function ImpactDashboard() {
         setShowSuccessModal(true);
         setOnlineStep("methods");
         setWalletNumber("");
+        setSecurityCode("");
       } else {
         alert(`Payment error: ${data.error}`);
       }
@@ -375,10 +377,23 @@ export default function ImpactDashboard() {
                     </div>
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Digital Banking Security Code or Password
+                    </label>
+                    <input
+                      type="password"
+                      value={securityCode}
+                      onChange={(e) => setSecurityCode(e.target.value)}
+                      placeholder="••••••"
+                      className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-0 text-lg tracking-widest font-bold"
+                    />
+                  </div>
+
                   <div className="space-y-3">
                     <button
                       onClick={() => handlePaymentSubmit(ride._id, onlineStep)}
-                      disabled={paymentLoading || walletNumber.length < 10}
+                      disabled={paymentLoading || walletNumber.length < 10 || !securityCode}
                       className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition active:scale-95 disabled:opacity-50 ${
                         onlineStep === "bKash" ? "bg-[#D12053] hover:bg-[#B01B46]" : 
                         onlineStep === "nagad" ? "bg-[#F7941D] hover:bg-[#E0851A]" : 
@@ -391,6 +406,7 @@ export default function ImpactDashboard() {
                       onClick={() => {
                         setOnlineStep("methods");
                         setWalletNumber("");
+                        setSecurityCode("");
                       }}
                       className="w-full py-2 text-gray-500 text-sm font-medium hover:text-gray-700 transition"
                     >
@@ -407,6 +423,7 @@ export default function ImpactDashboard() {
                   setShowPaymentModal(false);
                   setOnlineStep("methods");
                   setWalletNumber("");
+                  setSecurityCode("");
                 }}
                 className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-50 transition"
               >

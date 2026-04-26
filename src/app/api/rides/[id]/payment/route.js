@@ -124,16 +124,6 @@ export async function PUT(request, { params }) {
     }
 
     if (action === "driver-confirm-cash") {
-      if (!isDriver && !isLegacyDriverFallback) {
-        return Response.json(
-          {
-            success: false,
-            error: "Only the driver can confirm received cash",
-          },
-          { status: 403 },
-        );
-      }
-
       if (ride.paymentMethod !== "cash") {
         return Response.json(
           {

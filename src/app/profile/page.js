@@ -7,16 +7,26 @@ import Header from "@/components/Header";
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState(null);
+  const [reviewHistory, setReviewHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const res = await fetch("/api/auth/me");
-        if (res.ok) {
-          const data = await res.json();
+        const [profileRes, historyRes] = await Promise.all([
+          fetch("/api/auth/me"),
+          fetch("/api/reviews/history"),
+        ]);
+
+        if (profileRes.ok) {
+          const data = await profileRes.json();
           setUser(data.user);
+
+          if (historyRes.ok) {
+            const historyData = await historyRes.json();
+            setReviewHistory(Array.isArray(historyData.data) ? historyData.data : []);
+          }
         } else {
           // If unauthorized, redirect to login
           router.push("/login");
@@ -164,6 +174,59 @@ export default function ProfilePage() {
             </div>
 
 
+          </div>
+
+          <div id="review-history" className="px-8 pb-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-4 border-b pb-2">
+              Review History
+            </h2>
+
+            {reviewHistory.length === 0 ? (
+              <p className="text-sm text-gray-500">No reviews yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {reviewHistory.map((entry) => (
+                  <div
+                    key={entry._id}
+                    className="border border-gray-200 rounded-xl p-4 bg-gray-50"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {entry.ride?.origin || "Unknown"} → {entry.ride?.destination || "Unknown"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {entry.createdAt
+                            ? new Date(entry.createdAt).toLocaleString()
+                            : "Unknown date"}
+                        </p>
+                      </div>
+                      <span className="text-sm font-bold text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
+                        {entry.rating ? `${entry.rating}/5` : "N/A"}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-600 flex flex-wrap gap-2">
+                      <span className="bg-white border border-gray-200 px-2 py-0.5 rounded-full">
+                        {entry.direction === "received" ? "Received" : "Given"}
+                      </span>
+                      <span className="bg-white border border-gray-200 px-2 py-0.5 rounded-full capitalize">
+                        {entry.role || "rating"}
+                      </span>
+                      <span className="bg-white border border-gray-200 px-2 py-0.5 rounded-full">
+                        {entry.targetUser?.name || "Unknown User"}
+                      </span>
+                    </div>
+
+                    {entry.review ? (
+                      <p className="mt-3 text-sm text-gray-800">{entry.review}</p>
+                    ) : (
+                      <p className="mt-3 text-sm text-gray-400 italic">No written review</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </main>

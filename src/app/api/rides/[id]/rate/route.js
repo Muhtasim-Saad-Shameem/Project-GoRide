@@ -2,7 +2,6 @@ import connectMongoDB from "@/lib/mongodb";
 import Ride from "@/models/Ride";
 import User from "@/models/User";
 import ReviewLog from "@/models/ReviewLog";
-import EmergencyContact from "@/models/EmergencyContact";
 import { jwtVerify } from "jose";
 import { NextResponse } from "next/server";
 
@@ -19,7 +18,7 @@ export async function POST(request, { params }) {
   await connectMongoDB();
 
   try {
-    const { id } = params;
+    const { id } = await params;
     const { rating, review, role } = await request.json(); // role: 'rider' or 'driver'
     const numericRating = Number(rating);
 
@@ -33,6 +32,13 @@ export async function POST(request, { params }) {
     if (review !== undefined && typeof review !== "string") {
       return NextResponse.json(
         { success: false, error: "Invalid review" },
+        { status: 400 },
+      );
+    }
+
+    if (!String(review || "").trim()) {
+      return NextResponse.json(
+        { success: false, error: "Review feedback is required" },
         { status: 400 },
       );
     }
@@ -61,18 +67,6 @@ export async function POST(request, { params }) {
       return NextResponse.json(
         { success: false, error: "Invalid token" },
         { status: 401 },
-      );
-    }
-
-    // Check for emergency contact
-    const contact = await EmergencyContact.findOne({ userId });
-    if (!contact) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Please save an emergency contact before submitting a rating.",
-        },
-        { status: 400 },
       );
     }
 
@@ -106,9 +100,14 @@ export async function POST(request, { params }) {
 
     const isPassenger = Array.isArray(ride.passengers)
       ? ride.passengers.some(
-          (passengerId) => passengerId?.toString() === userId,
+          (p) => (p?._id || p)?.toString() === userId,
         )
       : false;
+    const isDriver =
+      (ride.creator && ride.creator.toString() === userId) ||
+      (ride.driverId && ride.driverId.toString() === userId);
+    const hasExplicitDriverIdentity = Boolean(ride.creator || ride.driverId);
+    const isLegacyDriverFallback = !hasExplicitDriverIdentity && !isPassenger;
 
     // Fraud Detection Logic
     // Check recent ratings actually submitted by this user via review logs.
@@ -173,7 +172,7 @@ export async function POST(request, { params }) {
       targetUserId = ride.creator;
     } else if (role === "driver") {
       // User is rating the rider
-      if (ride.creator.toString() !== userId) {
+      if (!isDriver && !isLegacyDriverFallback) {
         return NextResponse.json(
           { success: false, error: "You were not the driver for this ride" },
           { status: 403 },
@@ -192,7 +191,7 @@ export async function POST(request, { params }) {
         );
       }
       // Keep existing behavior: first passenger is the rated rider.
-      targetUserId = ride.passengers[0];
+      targetUserId = ride.riderId || ride.passengers[0];
       ride.riderRating = numericRating;
       ride.riderReview = (review || "").trim();
       ride.riderId = targetUserId;
@@ -203,6 +202,16 @@ export async function POST(request, { params }) {
     ride.review = (review || "").trim();
 
     await ride.save();
+
+    await ReviewLog.create({
+      userId,
+      targetUserId,
+      rideId: ride._id,
+      action: "RATING_SUBMITTED",
+      details: `${role} submitted a rating for this ride.`,
+      role,
+      rating: numericRating,
+    });
 
     // Update Trust Score for rated user based on all ratings they have received.
     if (targetUserId) {
@@ -239,15 +248,6 @@ export async function POST(request, { params }) {
       ride.trustScore = roundedAverage;
       await ride.save();
 
-      await ReviewLog.create({
-        userId,
-        targetUserId,
-        rideId: ride._id,
-        action: "RATING_SUBMITTED",
-        details: `${role} submitted a rating for this ride.`,
-        role,
-        rating: numericRating,
-      });
     }
 
     return NextResponse.json(

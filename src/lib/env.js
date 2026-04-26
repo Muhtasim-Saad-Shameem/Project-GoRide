@@ -14,13 +14,7 @@ function validateEnv() {
 
   // Validate MONGODB_URI format
   const uri = process.env.MONGODB_URI;
-  try {
-    new URL(
-      uri.startsWith("mongodb://") || uri.startsWith("mongodb+srv://")
-        ? uri
-        : `mongodb://${uri}`,
-    );
-  } catch {
+  if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
     throw new Error(
       "MONGODB_URI must be valid (mongodb:// or mongodb+srv://). For Atlas: get from Network Access.",
     );

@@ -61,6 +61,15 @@ const STATUS_LABELS = {
   cancelled: "Cancelled",
 };
 
+const PAYMENT_METHOD_LABELS = {
+  cash: "Cash",
+  bkash: "bKash",
+  nagad: "Nagad",
+  rocket: "Rocket",
+  online: "Online",
+  none: "N/A",
+};
+
 export default function DashboardPage() {
   const [rides, setRides] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,14 +82,28 @@ export default function DashboardPage() {
   const [statusUpdating, setStatusUpdating] = useState(null);
   const [autoProgressTimers, setAutoProgressTimers] = useState({});
 
+  // Payment state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [selectedPaymentRide, setSelectedPaymentRide] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [onlineStep, setOnlineStep] = useState("methods"); // methods, bkash, nagad, rocket
+  const [walletNumber, setWalletNumber] = useState("");
+  const [paymentPromptedRideIds, setPaymentPromptedRideIds] = useState([]);
+
   // Rating state
   const [showRatingModal, setShowRatingModal] = useState(false);
+  const [submittingRating, setSubmittingRating] = useState(false);
   const [ratingData, setRatingData] = useState({
     rideId: "",
     rating: 5,
     review: "",
     role: "",
   });
+  const [showReviewsModal, setShowReviewsModal] = useState(false);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [selectedReviewsRide, setSelectedReviewsRide] = useState(null);
+  const [rideReviews, setRideReviews] = useState([]);
   const [viewingDocs, setViewingDocs] = useState(null);
   const [docsData, setDocsData] = useState(null);
   const [editFormData, setEditFormData] = useState({
@@ -105,6 +128,37 @@ export default function DashboardPage() {
       prev.includes(pref) ? prev.filter((p) => p !== pref) : [...prev, pref],
     );
 
+  const isUserPassenger = (ride) => {
+    if (!user?._id) return false;
+    const userId = String(user._id);
+
+    if (ride?.riderId && String(ride.riderId) === userId) {
+      return true;
+    }
+
+    return Array.isArray(ride?.passengers)
+      ? ride.passengers.some((p) => String(p?._id || p) === userId)
+      : false;
+  };
+
+  const canCurrentUserRateRider = (ride) => {
+    return (
+      ride?.status === "completed" &&
+      !ride?.riderRating &&
+      Array.isArray(ride?.passengers) &&
+      ride.passengers.length > 0
+    );
+  };
+
+  const canCurrentUserSubmitReviewAsPassenger = (ride) => {
+    return (
+      ride?.status === "completed" &&
+      Boolean(user) &&
+      isUserPassenger(ride) &&
+      !ride?.driverRating
+    );
+  };
+
   useEffect(() => {
     fetchProfileAndRides();
     registerFCM((payload) => {
@@ -126,6 +180,22 @@ export default function DashboardPage() {
       Object.values(autoProgressTimers).forEach((timer) => clearTimeout(timer));
     };
   }, [autoProgressTimers]);
+
+  useEffect(() => {
+    const nextRide = rides.find(
+      (ride) =>
+        ride.status === "completed" &&
+        ride.paymentStatus !== "paid" &&
+        isUserPassenger(ride) &&
+        !paymentPromptedRideIds.includes(ride._id),
+    );
+
+    if (!nextRide || showPaymentModal) return;
+
+    setSelectedPaymentRide(nextRide);
+    setShowPaymentModal(true);
+    setPaymentPromptedRideIds((prev) => [...prev, nextRide._id]);
+  }, [rides, paymentPromptedRideIds, showPaymentModal, user]);
 
   const myRides = rides.filter(
     (r) =>
@@ -218,6 +288,12 @@ export default function DashboardPage() {
         setMessage(`Ride status updated to "${STATUS_LABELS[newStatus]}"`);
         setTimeout(() => setMessage(""), 3000);
 
+        // Trigger payment modal if completed manually
+        if (newStatus === "completed") {
+          setSelectedPaymentRide(ride);
+          setShowPaymentModal(true);
+        }
+
         // Start auto-progress if starting the ride
         if (newStatus === "active") {
           startAutoProgress(ride._id);
@@ -273,6 +349,16 @@ export default function DashboardPage() {
           status: newStatus,
         });
         setMessage(`Ride auto-progressed to "${STATUS_LABELS[newStatus]}"`);
+        
+        // Trigger payment modal if completed
+        if (newStatus === "completed") {
+          const ride = rides.find(r => r._id === rideId);
+          if (ride) {
+            setSelectedPaymentRide(ride);
+            setShowPaymentModal(true);
+          }
+        }
+
         setTimeout(() => setMessage(""), 3000);
         // Clear timer if completed
         if (newStatus === "completed") {
@@ -286,6 +372,62 @@ export default function DashboardPage() {
     } catch (err) {
       console.error("Auto-advance error:", err);
     }
+  };
+
+  const callPaymentApi = async (rideId, payload) => {
+    setPaymentLoading(true);
+    try {
+      const res = await fetch(`/api/rides/${rideId}/payment`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        const updatedRide = data.data;
+        setRides((prev) =>
+          prev.map((r) => (r._id === rideId ? { ...r, ...updatedRide } : r)),
+        );
+        return data;
+      } else {
+        setMessage(`Payment error: ${data.error}`);
+        return null;
+      }
+    } catch (err) {
+      setMessage(`Payment error: ${err.message}`);
+      return null;
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const closePaymentModal = () => {
+    setShowPaymentModal(false);
+    setOnlineStep("methods");
+    setWalletNumber("");
+  };
+
+  const handlePassengerCashIntent = async (rideId) => {
+    const data = await callPaymentApi(rideId, { action: "cash-intent" });
+    if (!data) return;
+    closePaymentModal();
+    setMessage("Cash payment request sent. Driver will confirm after receiving cash.");
+  };
+
+  const handleDriverCashConfirm = async (rideId) => {
+    const data = await callPaymentApi(rideId, { action: "driver-confirm-cash" });
+    if (!data) return;
+    closePaymentModal();
+    setShowSuccessModal(true);
+  };
+
+  const handleOnlinePayment = async (rideId, method) => {
+    const data = await callPaymentApi(rideId, { action: "online-pay", method });
+    if (!data) return;
+    closePaymentModal();
+    setShowSuccessModal(true);
   };
 
   const handleCancelRide = async (id) => {
@@ -441,31 +583,75 @@ export default function DashboardPage() {
     setShowRatingModal(true);
   };
 
+  const handleOpenRideReviews = async (ride) => {
+    setSelectedReviewsRide(ride);
+    setShowReviewsModal(true);
+    setReviewsLoading(true);
+
+    try {
+      const res = await fetch("/api/reviews/history");
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to load reviews");
+      }
+
+      const entries = Array.isArray(data.data) ? data.data : [];
+
+      setRideReviews(entries);
+    } catch (error) {
+      setRideReviews([]);
+      setMessage(`Error loading reviews: ${error.message}`);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
   const handleSubmitRating = async () => {
+    if (!ratingData.rideId || !ratingData.role) {
+      setMessage("Error: Invalid rating context. Please reopen the rating modal.");
+      return;
+    }
+
+    if (!ratingData.rating || ratingData.rating < 1 || ratingData.rating > 5) {
+      setMessage("Error: Rating must be between 1 and 5.");
+      return;
+    }
+
+    if (!String(ratingData.review || "").trim()) {
+      setMessage("Error: Please provide written feedback before submitting.");
+      return;
+    }
+
+    setSubmittingRating(true);
     try {
       const response = await fetch(`/api/rides/${ratingData.rideId}/rate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rating: ratingData.rating,
-          review: ratingData.review,
+          review: ratingData.review.trim(),
           role: ratingData.role,
         }),
       });
+
       const data = await response.json();
-      if (data.success) {
+      if (response.ok && data.success) {
         setMessage("Rating submitted successfully!");
         setShowRatingModal(false);
+        setRatingData({ rideId: "", rating: 5, review: "", role: "" });
         fetchProfileAndRides();
       } else {
         setMessage(`Error: ${data.error}`);
-        if (data.error.includes("Fraud")) {
+        if ((data.error || "").includes("Fraud")) {
           setShowRatingModal(false);
           fetchProfileAndRides();
         }
       }
     } catch (error) {
       setMessage(`Error submitting rating: ${error.message}`);
+    } finally {
+      setSubmittingRating(false);
     }
   };
 
@@ -490,6 +676,12 @@ export default function DashboardPage() {
                 className="bg-white text-green-600 px-4 py-2 rounded-lg font-semibold shadow-sm hover:bg-gray-100 transition-colors text-sm"
               >
                 My Profile
+              </Link>
+              <Link
+                href="/profile#review-history"
+                className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold shadow-sm hover:bg-gray-100 transition-colors text-sm"
+              >
+                View Reviews
               </Link>
             </div>
           </div>
@@ -817,11 +1009,26 @@ export default function DashboardPage() {
                               {ride.time}
                             </p>
                           </div>
-                          <span
-                            className={`px-3 py-1 rounded-full text-sm font-semibold ${STATUS_BADGE[ride.status] || "bg-gray-100 text-gray-700"}`}
-                          >
-                            {STATUS_LABELS[ride.status] || ride.status}
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span
+                              className={`px-3 py-1 rounded-full text-sm font-semibold ${STATUS_BADGE[ride.status] || "bg-gray-100 text-gray-700"}`}
+                            >
+                              {STATUS_LABELS[ride.status] || ride.status}
+                            </span>
+                            {ride.paymentStatus === "paid" ? (
+                              <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-200">
+                                PAID via {PAYMENT_METHOD_LABELS[ride.paymentMethod] || String(ride.paymentMethod || "").toUpperCase()}
+                              </span>
+                            ) : ride.paymentStatus === "pending" ? (
+                              <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-200">
+                                CASH PENDING DRIVER CONFIRMATION
+                              </span>
+                            ) : ride.status === "completed" ? (
+                              <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                                UNPAID
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-sm">
@@ -925,6 +1132,17 @@ export default function DashboardPage() {
                                     ✕ Cancel Ride
                                   </button>
                                 )}
+                              {ride.status === "completed" && ride.paymentStatus !== "paid" && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedPaymentRide(ride);
+                                    setShowPaymentModal(true);
+                                  }}
+                                  className="bg-orange-600 hover:bg-orange-700 text-white font-medium py-2 px-4 rounded-lg transition text-sm"
+                                >
+                                  💰 {ride.paymentStatus === "pending" ? "Confirm Cash Received" : "Confirm Payment"}
+                                </button>
+                              )}
                             </div>
                             <div className="flex gap-2 border-t border-gray-100 pt-3">
                               <button
@@ -958,17 +1176,16 @@ export default function DashboardPage() {
                                   💬 Chat
                                 </button>
                               )}
-                              {ride.status === "completed" &&
-                                !ride.riderRating && (
-                                  <button
-                                    onClick={() =>
-                                      handleOpenRatingModal(ride._id, "driver")
-                                    }
-                                    className="text-sm bg-purple-600 hover:bg-purple-700 text-white font-medium py-1.5 px-3 rounded-lg transition"
-                                  >
-                                    ⭐ Rate Rider
-                                  </button>
-                                )}
+                              {canCurrentUserRateRider(ride) && (
+                                <button
+                                  onClick={() =>
+                                    handleOpenRatingModal(ride._id, "driver")
+                                  }
+                                  className="text-sm bg-teal-600 hover:bg-teal-700 text-white font-medium py-1.5 px-3 rounded-lg transition"
+                                >
+                                  ✍️ Submit Review
+                                </button>
+                              )}
                             </div>
                           </>
                         )}
@@ -980,42 +1197,45 @@ export default function DashboardPage() {
                               onClick={() => handleAcceptRide(ride._id)}
                               disabled={
                                 ride.seats <= 0 ||
-                                (user &&
-                                  ride.passengers &&
-                                  ride.passengers.includes(user._id))
+                                (user && isUserPassenger(ride))
                               }
                               className={`font-medium py-2 px-6 rounded-lg transition ${
-                                user &&
-                                ride.passengers &&
-                                ride.passengers.includes(user._id)
+                                user && isUserPassenger(ride)
                                   ? "bg-gray-200 text-gray-600 cursor-not-allowed"
                                   : ride.seats <= 0
                                     ? "bg-red-100 text-red-800 cursor-not-allowed"
                                     : "bg-green-600 hover:bg-green-700 text-white"
                               }`}
                             >
-                              {user &&
-                              ride.passengers &&
-                              ride.passengers.includes(user._id)
+                              {user && isUserPassenger(ride)
                                 ? "Accepted"
                                 : ride.seats <= 0
                                   ? "Full"
                                   : "Accept Ride"}
                             </button>
-                            {ride.status === "completed" &&
-                              user &&
-                              ride.passengers &&
-                              ride.passengers.includes(user._id) &&
-                              !ride.driverRating && (
-                                <button
-                                  onClick={() =>
-                                    handleOpenRatingModal(ride._id, "rider")
-                                  }
-                                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition"
-                                >
-                                  ⭐ Rate Driver
-                                </button>
-                              )}
+                            
+                            {ride.status === "completed" && ride.paymentStatus !== "paid" && user && isUserPassenger(ride) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedPaymentRide(ride);
+                                  setShowPaymentModal(true);
+                                }}
+                                className="bg-orange-600 hover:bg-orange-700 text-white font-medium py-2 px-4 rounded-lg transition text-sm"
+                              >
+                                💳 {ride.paymentStatus === "pending" ? "Payment Pending" : "Pay Now"}
+                              </button>
+                            )}
+
+                            {canCurrentUserSubmitReviewAsPassenger(ride) && (
+                              <button
+                                onClick={() =>
+                                  handleOpenRatingModal(ride._id, "rider")
+                                }
+                                className="bg-teal-600 hover:bg-teal-700 text-white font-medium py-2 px-4 rounded-lg transition"
+                              >
+                                ✍️ Submit Review
+                              </button>
+                            )}
                             {ride.creator && (
                               <span className="text-sm text-gray-500 ml-auto">
                                 Offered by:{" "}
@@ -1033,6 +1253,186 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+
+          {/* Payment Modal */}
+          {showPaymentModal && selectedPaymentRide && (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in duration-300">
+                {/* Header */}
+                <div className={`p-6 text-white text-center transition-colors duration-500 ${
+                  onlineStep === "bkash" ? "bg-[#D12053]" : 
+                  onlineStep === "nagad" ? "bg-[#F7941D]" : 
+                  onlineStep === "rocket" ? "bg-[#8C3494]" : "bg-gradient-to-r from-orange-500 to-orange-600"
+                }`}>
+                  <div className="bg-white/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
+                    {onlineStep === "methods" ? "💰" : "📱"}
+                  </div>
+                  <h2 className="text-2xl font-bold">
+                    {onlineStep === "methods" ? "Ride Payment" : 
+                    onlineStep === "bkash" ? "bKash Payment" :
+                     onlineStep === "nagad" ? "Nagad Payment" : "Rocket Payment"}
+                  </h2>
+                  <p className="opacity-90">Total Fare to Pay</p>
+                  <div className="text-4xl font-extrabold mt-1">৳{selectedPaymentRide.fare}</div>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {onlineStep === "methods" ? (
+                    <>
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-gray-500">Route</span>
+                          <span className="font-semibold text-gray-800">{selectedPaymentRide.origin.split(',')[0]} → {selectedPaymentRide.destination.split(',')[0]}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Driver</span>
+                          <span className="font-semibold text-gray-800">{selectedPaymentRide.driverName}</span>
+                        </div>
+                      </div>
+
+                      {/* Options for Passenger */}
+                      {isUserPassenger(selectedPaymentRide) ? (
+                        <div className="space-y-3">
+                          <p className="text-sm font-bold text-gray-700 uppercase tracking-wider">Choose Payment Method</p>
+                          
+                          <button
+                            onClick={() => handlePassengerCashIntent(selectedPaymentRide._id)}
+                            disabled={paymentLoading}
+                            className="w-full flex items-center gap-4 p-4 border-2 border-gray-100 rounded-xl hover:border-orange-500 hover:bg-orange-50 transition group"
+                          >
+                            <div className="bg-green-100 text-green-600 w-12 h-12 rounded-lg flex items-center justify-center text-2xl group-hover:scale-110 transition">
+                              💵
+                            </div>
+                            <div className="text-left">
+                              <div className="font-bold text-gray-800">I Paid in Cash</div>
+                              <div className="text-xs text-gray-500">Notify driver to confirm receipt</div>
+                            </div>
+                          </button>
+
+                          <div className="grid grid-cols-3 gap-3">
+                            <button
+                              onClick={() => setOnlineStep("bkash")}
+                              className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#D12053] hover:bg-pink-50 transition"
+                            >
+                              <div className="text-2xl mb-1">🎀</div>
+                              <span className="text-[10px] font-bold text-[#D12053]">bKash</span>
+                            </button>
+                            <button
+                              onClick={() => setOnlineStep("nagad")}
+                              className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#F7941D] hover:bg-orange-50 transition"
+                            >
+                              <div className="text-2xl mb-1">🔸</div>
+                              <span className="text-[10px] font-bold text-[#F7941D]">Nagad</span>
+                            </button>
+                            <button
+                              onClick={() => setOnlineStep("rocket")}
+                              className="flex flex-col items-center p-3 border-2 border-gray-100 rounded-xl hover:border-[#8C3494] hover:bg-purple-50 transition"
+                            >
+                              <div className="text-2xl mb-1">🚀</div>
+                              <span className="text-[10px] font-bold text-[#8C3494]">Rocket</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Driver View */
+                        <div className="text-center space-y-4">
+                          <div className="p-4 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium">
+                            {selectedPaymentRide.paymentStatus === "pending"
+                              ? "Passenger marked cash payment. Confirm when you receive cash in real life."
+                              : "Confirm cash only after receiving payment in real life."}
+                          </div>
+                          <button
+                            onClick={() => handleDriverCashConfirm(selectedPaymentRide._id)}
+                            disabled={paymentLoading}
+                            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-xl shadow-lg transition transform active:scale-95 disabled:opacity-50"
+                          >
+                            {paymentLoading ? "Confirming..." : "Confirm Cash Received"}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* Digital Wallet Step */
+                    <div className="space-y-4 animate-in slide-in-from-right duration-300">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Enter {PAYMENT_METHOD_LABELS[onlineStep] || onlineStep} Number
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">+880</span>
+                          <input
+                            type="tel"
+                            maxLength="11"
+                            value={walletNumber}
+                            onChange={(e) => setWalletNumber(e.target.value.replace(/\D/g, ""))}
+                            placeholder="1XXXXXXXXX"
+                            className="w-full pl-16 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:border-orange-500 focus:ring-0 text-lg tracking-widest font-bold"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <button
+                          onClick={() => handleOnlinePayment(selectedPaymentRide._id, onlineStep)}
+                          disabled={paymentLoading || walletNumber.length < 10}
+                          className={`w-full py-4 rounded-xl text-white font-bold shadow-lg transition active:scale-95 disabled:opacity-50 ${
+                            onlineStep === "bkash" ? "bg-[#D12053] hover:bg-[#B01B46]" : 
+                            onlineStep === "nagad" ? "bg-[#F7941D] hover:bg-[#E0851A]" : 
+                            "bg-[#8C3494] hover:bg-[#762C7D]"
+                          }`}
+                        >
+                          {paymentLoading ? "Processing..." : `Pay ৳${selectedPaymentRide.fare} Now`}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setOnlineStep("methods");
+                            setWalletNumber("");
+                          }}
+                          className="w-full py-2 text-gray-500 text-sm font-medium hover:text-gray-700 transition"
+                        >
+                          ← Change Method
+                        </button>
+                      </div>
+                      
+                      <p className="text-[10px] text-center text-gray-400">
+                        Secure 128-bit encrypted payment gateway
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-6 bg-gray-50 border-t border-gray-100">
+                  <button
+                    onClick={closePaymentModal}
+                    className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-50 transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Success Modal */}
+          {showSuccessModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70] p-4 backdrop-blur-md">
+              <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-8 text-center animate-in zoom-in duration-300">
+                <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6 text-5xl animate-bounce">
+                  ✓
+                </div>
+                <h2 className="text-3xl font-extrabold text-gray-900 mb-2">Success!</h2>
+                <p className="text-gray-600 text-lg font-medium mb-8">
+                  Your payment is completed
+                </p>
+                <button
+                  onClick={() => setShowSuccessModal(false)}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-green-200 transition transform active:scale-95"
+                >
+                  Great!
+                </button>
+              </div>
+            </div>
+          )}
 
           <PreferencesModal
             show={showFilterModal}
@@ -1136,7 +1536,7 @@ export default function DashboardPage() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Review (Optional)
+                      Review (Required)
                     </label>
                     <textarea
                       value={ratingData.review}
@@ -1152,9 +1552,10 @@ export default function DashboardPage() {
                   <div className="flex gap-3 pt-2">
                     <button
                       onClick={handleSubmitRating}
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition duration-200"
+                      disabled={submittingRating}
+                      className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-bold py-3 rounded-lg transition duration-200"
                     >
-                      Submit Rating
+                      {submittingRating ? "Submitting..." : "Submit Rating"}
                     </button>
                     <button
                       onClick={() => setShowRatingModal(false)}
@@ -1164,6 +1565,62 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Ride Reviews Modal */}
+          {showReviewsModal && selectedReviewsRide && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[85vh] overflow-y-auto">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">All Review History</h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Opened from: {selectedReviewsRide.origin} → {selectedReviewsRide.destination}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowReviewsModal(false);
+                      setSelectedReviewsRide(null);
+                      setRideReviews([]);
+                    }}
+                    className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {reviewsLoading ? (
+                  <p className="text-gray-600">Loading reviews...</p>
+                ) : rideReviews.length === 0 ? (
+                  <p className="text-gray-500">No reviews found yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {rideReviews.map((entry) => (
+                      <div key={entry._id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {entry.direction === "given"
+                              ? `You rated ${entry.targetUser?.name || "User"}`
+                              : `${entry.reviewer?.name || "User"} rated you`}
+                          </p>
+                          <span className="text-sm font-bold text-green-700">{entry.rating}/5</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-2">
+                          {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "Unknown time"}
+                        </p>
+                        <p className="text-xs text-gray-500 mb-2">
+                          {entry.ride?.origin || "Unknown"} → {entry.ride?.destination || "Unknown"}
+                        </p>
+                        <p className="text-sm text-gray-800">
+                          {entry.review?.trim() ? entry.review : "No written review"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

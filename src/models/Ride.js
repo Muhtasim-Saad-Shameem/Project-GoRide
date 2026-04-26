@@ -100,6 +100,16 @@ const rideSchema = new mongoose.Schema(
       enum: ['waiting', 'active', 'en-route', 'arrived', 'completed', 'cancelled'],
       default: 'active',
     },
+    paymentStatus: {
+      type: String,
+      enum: ['pending', 'paid', 'unpaid'],
+      default: 'unpaid',
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['cash', 'bKash', 'nagad', 'rocket', 'online', 'none'],
+      default: 'none',
+    },
     riderRating: {
       type: Number,
       min: 1,

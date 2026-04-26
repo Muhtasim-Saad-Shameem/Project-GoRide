@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Header from '@/components/Header';
-import Script from 'next/script';
 import Link from 'next/link';
 import PreferencesModal from '@/components/PreferencesModal';
 import { preferenceOptions, nameToOption } from '@/lib/preferenceOptions';
@@ -15,10 +14,6 @@ const RouteMap = dynamic(() => import('@/components/RouteMap'), {
 });
 
 
-const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
-const isLikelyGoogleMapsKey = (key) => /^AIza[0-9A-Za-z_-]{20,}$/.test(key);
-const hasGoogleMapsKey = isLikelyGoogleMapsKey(mapsApiKey);
-const hasInvalidGoogleMapsKey = Boolean(mapsApiKey) && !hasGoogleMapsKey;
 
 export default function GoRidePage() {
   const [formData, setFormData] = useState({
@@ -142,83 +137,8 @@ export default function GoRidePage() {
     setShowPrefsModal(true);
   };
 
-  const initMap = () => {
-    if (typeof window !== 'undefined' && window.google && !map) {
-      const google = window.google;
-      
-      const newMap = new google.maps.Map(mapRef.current, {
-        center: { lat: 23.8103, lng: 90.4125 }, // Dhaka coordinates
-        zoom: 12,
-        mapTypeControl: false,
-      });
-
-      const newRenderer = new google.maps.DirectionsRenderer();
-      newRenderer.setMap(newMap);
-      
-      const newService = new google.maps.DirectionsService();
-
-      setMap(newMap);
-      setDirectionsRenderer(newRenderer);
-      setDirectionsService(newService);
-
-      // Autocomplete setup
-      const originAutocomplete = new google.maps.places.Autocomplete(originInputRef.current);
-      const destinationAutocomplete = new google.maps.places.Autocomplete(destinationInputRef.current);
-
-      originAutocomplete.addListener('place_changed', () => {
-        const place = originAutocomplete.getPlace();
-        if (place.formatted_address) {
-          setFormData(prev => ({ ...prev, origin: place.formatted_address }));
-        }
-      });
-
-      destinationAutocomplete.addListener('place_changed', () => {
-        const place = destinationAutocomplete.getPlace();
-        if (place.formatted_address) {
-          setFormData(prev => ({ ...prev, destination: place.formatted_address }));
-        }
-      });
-      
-      setIsApiLoaded(true);
-    }
-  };
-
   const handleShowRoute = () => {
-    if (!formData.origin || !formData.destination) {
-      alert('Please enter both origin and destination');
-      return;
-    }
-
-    if (!directionsService || !directionsRenderer) {
-      alert('Google Maps API is still loading...');
-      return;
-    }
-
-    directionsService.route(
-      {
-        origin: formData.origin,
-        destination: formData.destination,
-        travelMode: window.google.maps.TravelMode.DRIVING,
-        drivingOptions: {
-          departureTime: new Date(),
-          trafficModel: window.google.maps.TrafficModel.BEST_GUESS,
-        },
-      },
-      (result, status) => {
-        if (status === window.google.maps.DirectionsStatus.OK) {
-          directionsRenderer.setDirections(result);
-          
-          const route = result.routes[0].legs[0];
-          setTravelInfo({
-            distance: route.distance.text,
-            duration: route.duration.text,
-            durationInTraffic: route.duration_in_traffic ? route.duration_in_traffic.text : null,
-          });
-        } else {
-          alert('Could not find route: ' + status);
-        }
-      }
-    );
+    handleCalculateFare();
   };
 
   const handleSubmit = async (e) => {
@@ -267,7 +187,6 @@ export default function GoRidePage() {
       });
 
       const data = await response.json();
-      console.log('Response from server:', data);
       if (!data.success) {
         throw new Error(data.message || 'Failed to create ride');
       }
@@ -276,7 +195,6 @@ export default function GoRidePage() {
       setTimeout(() => {
         window.location.href = `/impact/${data.data._id}`;
       }, 1000);
-      setMessage('Ride offered successfully!');
       setFormData({
         origin: '',
         destination: '',
@@ -288,10 +206,7 @@ export default function GoRidePage() {
         department: '',
         buildingName: '',
       });
-      if (directionsRenderer) {
-        directionsRenderer.setDirections({ routes: [] });
-      }
-      setTravelInfo(null);
+      setFareData(null);
     } catch (error) {
       setMessage(`Error: ${error.message}`);
     } finally {
@@ -309,13 +224,6 @@ export default function GoRidePage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       <Header />
-      {hasGoogleMapsKey && (
-        <Script
-          src={`https://maps.googleapis.com/maps/api/js?key=${mapsApiKey}&libraries=places`}
-          onLoad={initMap}
-          onError={() => setMessage('Failed to load Google Maps. Check your API key and restrictions.')}
-        />
-      )}
       <div className="flex-1 flex flex-col items-center p-4">
       {/* Main card */}
       <div className="w-full max-w-6xl bg-white shadow-lg rounded-xl overflow-hidden">
@@ -344,7 +252,6 @@ export default function GoRidePage() {
                 Starting Point (Origin)
               </label>
               <input
-                ref={originInputRef}
                 type="text"
                 name="origin"
                 value={formData.origin}
@@ -360,11 +267,15 @@ export default function GoRidePage() {
                 Destination
               </label>
               <input
-                ref={destinationInputRef}
                 type="text"
                 name="destination"
                 value={formData.destination}
                 onChange={handleInputChange}
+                onBlur={() => {
+                  if (formData.origin && formData.destination && formData.vehicleType && formData.availableSeats) {
+                    handleCalculateFare();
+                  }
+                }}
                 placeholder="eg. Gulshan, 11/A Main St. Or BRAC University"
                 className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-400 text-gray-900"
               />
@@ -617,39 +528,27 @@ export default function GoRidePage() {
               </div>
             )}
           </form>
-
-          {/* Map and Route Info */}
-          <div className="mt-8 space-y-4">
-            {travelInfo && (
-              <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 flex flex-wrap gap-6 justify-around text-indigo-900 font-medium">
-                <div>Distance: <span className="font-bold">{travelInfo.distance}</span></div>
-                <div>Est. Time: <span className="font-bold">{travelInfo.duration}</span></div>
-                {travelInfo.durationInTraffic && (
-                  <div>With Traffic: <span className="font-bold text-red-600">{travelInfo.durationInTraffic}</span></div>
-                )}
-              </div>
-            )}
-            <div className="relative w-full h-96 rounded-xl border-2 border-gray-200 shadow-inner overflow-hidden" style={{ minHeight: '400px' }}>
-              <div
-                ref={mapRef}
-                className="w-full h-full"
-              />
-              {!isApiLoaded && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-gray-500">
-                  Loading Google Maps...
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-gray-500 italic text-center">
-              Routes are calculated based on current Dhaka traffic conditions.
-            </p>
-          </div>
         </div>
 
         {/* Right Column: Map */}
         <div className="w-full md:w-1/2 bg-gray-50 min-h-[400px] relative">
           <div className="sticky top-0 h-full w-full min-h-[400px] md:h-screen md:max-h-[800px]">
             <RouteMap fareData={fareData} />
+            
+            {fareData && (
+              <div className="absolute bottom-4 left-4 right-4 z-[400] bg-white/90 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-green-100">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-xs text-gray-500 font-medium">ESTIMATED ROUTE</p>
+                    <p className="text-sm font-bold text-gray-800">{fareData.distance_text} · {fareData.duration_text}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 font-medium">FASTER VIA</p>
+                    <p className="text-sm font-bold text-green-600">Main Roads</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -665,6 +564,14 @@ export default function GoRidePage() {
       </div>
         </div>
       </div>
+
+      {showPrefsModal && (
+        <PreferencesModal
+          selected={preferences}
+          setSelected={setPreferences}
+          onClose={() => setShowPrefsModal(false)}
+        />
+      )}
     </div>
   );
 }
